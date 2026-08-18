@@ -178,7 +178,7 @@
 <body>
 
 <header>
-  <h1>Pocket Scanner <span style="color:var(--muted); font-size:12px; font-weight:400;">v6</span></h1>
+  <h1>Pocket Scanner <span style="color:var(--muted); font-size:12px; font-weight:400;">v7</span></h1>
   <span class="count" id="count">0 pages</span>
 </header>
 
@@ -264,6 +264,7 @@
   <div class="camflash" id="camFlash"></div>
   <div class="cambar">
     <button class="camround" id="camTorch" title="Torch on / off">&#128294;</button>
+    <button class="camround" id="camTimer" title="Self-timer: off / 3 seconds / auto every 5 seconds" style="font-size:13px; font-weight:600;">Off</button>
     <button class="shutter" id="camSnap" title="Take scan"></button>
     <button class="camdone" id="camDone">Done</button>
   </div>
@@ -925,6 +926,7 @@
   }
 
   function closeCamera(){
+    stopAuto(); clearTimeout(countdownT);
     setTorch(false);
     if(camStream){ camStream.getTracks().forEach(t=>t.stop()); }
     camStream = null; camTrack = null; torchOn = false;
@@ -932,8 +934,74 @@
     if(camShots) toast(camShots + (camShots===1?' page added':' pages added'));
   }
 
+  // ---------- self-timer / auto capture / Bluetooth remote ----------
+  let timerMode = 0;            // 0 = off, 1 = 3s delay, 2 = auto every 5s
+  let autoRunning = false, countdownT = null;
+  const TIMER_LABELS = ['Off', '3s', 'Auto'];
+
+  $('camTimer').addEventListener('click', ()=>{
+    stopAuto();
+    timerMode = (timerMode + 1) % 3;
+    $('camTimer').textContent = TIMER_LABELS[timerMode];
+    $('camTimer').classList.toggle('on', timerMode !== 0);
+    if(timerMode === 1) toast('Timer: 3 second delay before each scan');
+    if(timerMode === 2) toast('Auto: tap the round button to start scanning every 5 s');
+    if(timerMode === 0) toast('Timer off');
+    updateCamNote();
+  });
+
+  function countdown(secs, done){
+    clearTimeout(countdownT);
+    if(secs <= 0){ done(); return; }
+    $('camNote').textContent = 'Scanning in ' + secs + '…';
+    countdownT = setTimeout(()=>countdown(secs-1, done), 1000);
+  }
+
+  function stopAuto(){
+    if(autoRunning){
+      autoRunning = false;
+      clearTimeout(countdownT);
+      updateCamNote();
+    }
+  }
+
+  function autoLoop(){
+    if(!autoRunning) return;
+    countdown(5, async ()=>{
+      if(!autoRunning) return;
+      await snap();
+      autoLoop();
+    });
+  }
+
+  function shutterPress(){
+    if(camView.hidden) return;
+    if(timerMode === 1){
+      countdown(3, async ()=>{ await snap(); updateCamNote(); });
+    }else if(timerMode === 2){
+      if(autoRunning){
+        stopAuto();
+        toast('Auto scanning stopped');
+      }else{
+        autoRunning = true;
+        toast('Auto scanning — tap the round button again to stop');
+        autoLoop();
+      }
+    }else{
+      snap();
+    }
+  }
+
+  // Bluetooth clickers and page-turner remotes act like a keyboard:
+  // while the camera is open, any key press takes a scan.
+  document.addEventListener('keydown', e=>{
+    if(camView.hidden || e.repeat) return;
+    e.preventDefault();
+    shutterPress();
+  });
+
   $('camTorch').addEventListener('click', ()=>setTorch(!torchOn));
-  $('camSnap').addEventListener('click', snap);
+  $('camSnap').addEventListener('click', shutterPress);
   $('camDone').addEventListener('click', closeCamera);
 
   // ---------- wiring ----------
