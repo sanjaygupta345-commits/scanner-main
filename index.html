@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<title>Pocket Scanner</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+  :root{
+    --bg:#14171C; --surface:#1E242C; --line:#2C333D;
+    --text:#EEF1F4; --muted:#8A93A0;
+    --accent:#FFD23F; --accent-ink:#1A1500;
+    --danger:#FF6B6B;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0; padding:0; background:var(--bg); color:var(--text);
+    font-family:"Google Sans",Roboto,"Segoe UI",system-ui,sans-serif;}
+  body{min-height:100vh; display:flex; flex-direction:column;}
+
+  header{
+    position:sticky; top:0; z-index:10; background:rgba(20,23,28,.94);
+    backdrop-filter:blur(6px); border-bottom:1px solid var(--line);
+    padding:14px 16px 10px; display:flex; align-items:baseline; gap:10px;
+  }
+  header h1{font-size:17px; margin:0; font-weight:600; letter-spacing:.02em;}
+  header .count{margin-left:auto; font-variant-numeric:tabular-nums;
+    font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted);}
+
+  main{flex:1; padding:16px 16px 140px; max-width:560px; width:100%; margin:0 auto;}
+
+  .empty{
+    border:1px dashed var(--line); border-radius:14px; padding:44px 20px;
+    text-align:center; position:relative; overflow:hidden; background:var(--surface);
+  }
+  .empty p{margin:0 0 6px; font-size:15px;}
+  .empty small{color:var(--muted); font-size:13px; line-height:1.5; display:block;}
+  .beam{
+    position:absolute; left:0; top:0; width:100%; height:2px;
+    background:linear-gradient(90deg, transparent, var(--accent), transparent);
+    animation:sweep 3.2s ease-in-out infinite; opacity:.8;
+  }
+  @keyframes sweep{0%{top:0} 50%{top:calc(100% - 2px)} 100%{top:0}}
+  @media (prefers-reduced-motion: reduce){ .beam{animation:none; top:0;} }
+
+  .addrow{display:flex; gap:10px; margin:16px 0 4px;}
+  .btn{
+    appearance:none; border:none; border-radius:12px; cursor:pointer;
+    font:inherit; font-weight:600; padding:14px 12px; min-height:48px;
+    display:flex; align-items:center; justify-content:center; gap:8px;
+  }
+  .btn:active{transform:scale(.98);}
+  .btn-primary{background:var(--accent); color:var(--accent-ink); flex:2;}
+  .btn-ghost{background:var(--surface); color:var(--text); border:1px solid var(--line); flex:1;}
+
+  .modebar{display:flex; align-items:center; gap:8px; margin:14px 2px 10px;}
+  .modebar span{font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted);}
+  .seg{display:flex; background:var(--surface); border:1px solid var(--line); border-radius:10px; overflow:hidden;}
+  .seg button{appearance:none; border:none; background:transparent; color:var(--muted);
+    font:inherit; font-size:13px; font-weight:600; padding:8px 14px; cursor:pointer;}
+  .seg button.on{background:var(--accent); color:var(--accent-ink);}
+
+  .card{
+    display:flex; gap:12px; background:var(--surface); border:1px solid var(--line);
+    border-radius:14px; padding:10px; margin-bottom:12px; align-items:center;
+  }
+  .thumbwrap{width:86px; flex:0 0 86px; border-radius:8px; overflow:hidden; background:#000;
+    display:flex; align-items:center; justify-content:center;}
+  .thumbwrap img{width:100%; height:auto; display:block;}
+  .meta{flex:1; min-width:0;}
+  .meta .pnum{font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); margin-bottom:8px;}
+  .tools{display:flex; flex-wrap:wrap; gap:8px;}
+  .tool{
+    appearance:none; border:1px solid var(--line); background:var(--bg); color:var(--text);
+    border-radius:9px; min-width:44px; min-height:40px; padding:6px 10px;
+    font:inherit; font-size:13px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;
+  }
+  .tool.on{border-color:var(--accent); color:var(--accent);}
+  .tool.del{color:var(--danger); border-color:#4a2a2a;}
+  .tool:disabled{opacity:.35;}
+
+  .exportbar{
+    position:fixed; left:0; right:0; bottom:0; z-index:10;
+    background:rgba(20,23,28,.96); backdrop-filter:blur(6px);
+    border-top:1px solid var(--line);
+    padding:12px 16px calc(12px + env(safe-area-inset-bottom));
+  }
+  .exportbar .inner{max-width:560px; margin:0 auto; display:flex; gap:10px;}
+  .exportbar .btn{flex:1; font-size:15px;}
+  .btn-pdf{background:var(--accent); color:var(--accent-ink);}
+  .btn-img{background:var(--surface); color:var(--text); border:1px solid var(--line);}
+  .btn[disabled]{opacity:.4; pointer-events:none;}
+
+  .toast{
+    position:fixed; bottom:calc(96px + env(safe-area-inset-bottom)); left:50%; transform:translateX(-50%);
+    background:#000; color:var(--text); border:1px solid var(--line);
+    padding:10px 16px; border-radius:10px; font-size:14px; z-index:40;
+    opacity:0; transition:opacity .25s; pointer-events:none; white-space:nowrap;
+  }
+  .toast.show{opacity:1;}
+  input[type=file]{display:none;}
+
+  /* ---------- Camera with torch ---------- */
+  .camview{position:fixed; inset:0; z-index:30; background:#000; display:flex; flex-direction:column;}
+  .camview[hidden]{display:none;}
+  .camview video{flex:1; width:100%; object-fit:contain; background:#000; min-height:0;}
+  .camnote{position:absolute; top:14px; left:0; right:0; text-align:center; color:#fff;
+    font-size:13px; text-shadow:0 1px 3px #000; z-index:1;}
+  .camflash{position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none; transition:opacity .18s;}
+  .camflash.go{opacity:.7; transition:none;}
+  .cambar{display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:14px 22px calc(18px + env(safe-area-inset-bottom));
+    background:rgba(20,23,28,.96); border-top:1px solid var(--line);}
+  .camround{appearance:none; border:1px solid var(--line); background:var(--surface); color:var(--text);
+    width:56px; height:56px; border-radius:50%; font-size:22px; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;}
+  .camround.on{background:var(--accent); border-color:var(--accent);}
+  .shutter{appearance:none; cursor:pointer; width:76px; height:76px; border-radius:50%;
+    background:var(--accent); border:5px solid #fff; padding:0;}
+  .shutter:active{transform:scale(.94);}
+  .camdone{appearance:none; border:1px solid var(--line); background:var(--surface); color:var(--text);
+    border-radius:12px; min-height:56px; padding:0 18px; font:inherit; font-weight:600; cursor:pointer;}
+
+  /* ---------- Crop editor ---------- */
+  .cropview{
+    position:fixed; inset:0; z-index:30; background:#0B0D10;
+    display:flex; flex-direction:column;
+  }
+  .cropview[hidden]{display:none;}
+  .crophead{padding:14px 16px 8px; font-size:12px; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--muted); text-align:center;}
+  .cropstage{flex:1; display:flex; align-items:center; justify-content:center;
+    padding:8px 14px; min-height:0; overflow:hidden;}
+  .cropwrap{position:relative; touch-action:none;}
+  .cropwrap img{display:block; max-width:100%; max-height:100%; user-select:none;
+    -webkit-user-drag:none; pointer-events:none;}
+  .cropbox{
+    position:absolute; border:2px solid var(--accent);
+    box-shadow:0 0 0 9999px rgba(0,0,0,.55);
+    touch-action:none; cursor:move;
+  }
+  .cropbox .third{position:absolute; background:rgba(255,210,63,.35); pointer-events:none;}
+  .cropbox .v1{left:33.33%; top:0; width:1px; height:100%;}
+  .cropbox .v2{left:66.66%; top:0; width:1px; height:100%;}
+  .cropbox .h1{top:33.33%; left:0; height:1px; width:100%;}
+  .cropbox .h2{top:66.66%; left:0; height:1px; width:100%;}
+  .handle{
+    position:absolute; width:34px; height:34px; touch-action:none;
+  }
+  .handle::after{
+    content:""; position:absolute; inset:7px; border-radius:50%;
+    background:var(--accent); border:2px solid #0B0D10;
+  }
+  .handle[data-c="nw"]{left:-17px; top:-17px; cursor:nwse-resize;}
+  .handle[data-c="ne"]{right:-17px; top:-17px; cursor:nesw-resize;}
+  .handle[data-c="sw"]{left:-17px; bottom:-17px; cursor:nesw-resize;}
+  .handle[data-c="se"]{right:-17px; bottom:-17px; cursor:nwse-resize;}
+  .cropbar{
+    display:flex; gap:10px; padding:12px 16px calc(14px + env(safe-area-inset-bottom));
+    border-top:1px solid var(--line); background:rgba(20,23,28,.96);
+  }
+  .cropbar .btn{flex:1; font-size:15px;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Pocket Scanner <span style="color:var(--muted); font-size:12px; font-weight:400;">v3</span></h1>
+  <span class="count" id="count">0 pages</span>
+</header>
+
+<main>
+  <div class="empty" id="empty">
+    <div class="beam"></div>
+    <p>No pages yet</p>
+    <small>Tap <b>Scan page</b> to open the camera.<br>
+    Each photo becomes one page. When you're done,<br>save everything as a single PDF or image.</small>
+  </div>
+
+  <div class="addrow">
+    <button class="btn btn-primary" id="btnScan">&#128247; Scan page</button>
+    <button class="btn btn-ghost" id="btnGallery">Gallery</button>
+  </div>
+
+  <div class="modebar">
+    <span>New pages</span>
+    <div class="seg" id="modeSeg">
+      <button data-mode="color" class="on">Color</button>
+      <button data-mode="bw">B&amp;W text</button>
+    </div>
+  </div>
+
+  <div id="list"></div>
+</main>
+
+<div class="exportbar">
+  <div class="inner">
+    <button class="btn btn-pdf" id="btnPdf" disabled>Save as PDF</button>
+    <button class="btn btn-img" id="btnImg" disabled>Save as one image</button>
+  </div>
+</div>
+
+<!-- Camera with torch -->
+<div class="camview" id="camView" hidden>
+  <div class="camnote" id="camNote"></div>
+  <video id="camVideo" autoplay playsinline muted></video>
+  <div class="camflash" id="camFlash"></div>
+  <div class="cambar">
+    <button class="camround" id="camTorch" title="Torch on / off">&#128294;</button>
+    <button class="shutter" id="camSnap" title="Take scan"></button>
+    <button class="camdone" id="camDone">Done</button>
+  </div>
+</div>
+
+<!-- Crop editor -->
+<div class="cropview" id="cropView" hidden>
+  <div class="crophead" id="cropHead">Crop page</div>
+  <div class="cropstage">
+    <div class="cropwrap" id="cropWrap">
+      <img id="cropImg" alt="Page being cropped">
+      <div class="cropbox" id="cropBox">
+        <div class="third v1"></div><div class="third v2"></div>
+        <div class="third h1"></div><div class="third h2"></div>
+        <div class="handle" data-c="nw"></div>
+        <div class="handle" data-c="ne"></div>
+        <div class="handle" data-c="sw"></div>
+        <div class="handle" data-c="se"></div>
+      </div>
+    </div>
+  </div>
+  <div class="cropbar">
+    <button class="btn btn-ghost" id="cropCancel">Cancel</button>
+    <button class="btn btn-ghost" id="cropReset">Reset</button>
+    <button class="btn btn-primary" id="cropApply">Apply</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<input type="file" id="fileCam" accept="image/*" capture="environment">
+<input type="file" id="fileGal" accept="image/*" multiple>
+
+<script>
+(function(){
+  const MAX_SIDE = 2000;
+  const THUMB_SIDE = 320;
+  const pages = [];  // {id, img, mode, rot, crop}  crop = {x,y,w,h} normalized, in ORIGINAL (unrotated) image space, or null
+  let defaultMode = 'color';
+  let nextId = 1;
+  let busy = false;
+
+  const $ = id => document.getElementById(id);
+  const listEl = $('list'), emptyEl = $('empty'), countEl = $('count');
+  const toastEl = $('toast');
+
+  function toast(msg, ms){
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(toastEl._t);
+    toastEl._t = setTimeout(()=>toastEl.classList.remove('show'), ms || 2200);
+  }
+
+  // ---------- image pipeline ----------
+  function loadImage(file){
+    return new Promise((res, rej)=>{
+      const url = URL.createObjectURL(file);
+      const im = new Image();
+      im.onload = ()=>res({im, url});
+      im.onerror = ()=>{URL.revokeObjectURL(url); rej(new Error('load'));};
+      im.src = url;
+    });
+  }
+
+  function downscale(im){
+    let w = im.naturalWidth, h = im.naturalHeight;
+    const s = Math.min(1, MAX_SIDE / Math.max(w,h));
+    w = Math.round(w*s); h = Math.round(h*s);
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    c.getContext('2d').drawImage(im, 0, 0, w, h);
+    return c;
+  }
+
+  function applyBW(canvas){
+    const ctx = canvas.getContext('2d');
+    const d = ctx.getImageData(0,0,canvas.width,canvas.height);
+    const p = d.data;
+    const lo = 80, hi = 215, range = hi - lo;
+    for(let i=0;i<p.length;i+=4){
+      let v = 0.299*p[i] + 0.587*p[i+1] + 0.114*p[i+2];
+      v = (v - lo) * 255 / range;
+      v = v < 0 ? 0 : v > 255 ? 255 : v;
+      p[i]=p[i+1]=p[i+2]=v;
+    }
+    ctx.putImageData(d,0,0);
+    return canvas;
+  }
+
+  // Render one page: crop (in original space) -> scale -> rotate -> filter
+  function renderPage(page, maxSide, ignoreCrop){
+    const src = page.img;
+    let sx = 0, sy = 0, sw = src.width, sh = src.height;
+    if(page.crop && !ignoreCrop){
+      sx = Math.round(page.crop.x * src.width);
+      sy = Math.round(page.crop.y * src.height);
+      sw = Math.max(1, Math.round(page.crop.w * src.width));
+      sh = Math.max(1, Math.round(page.crop.h * src.height));
+    }
+    const s = maxSide ? Math.min(1, maxSide/Math.max(sw,sh)) : 1;
+    const w = Math.max(1, Math.round(sw*s));
+    const h = Math.max(1, Math.round(sh*s));
+    const rot = ((page.rot % 360) + 360) % 360;
+    const swap = (rot === 90 || rot === 270);
+    const c = document.createElement('canvas');
+    c.width  = swap ? h : w;
+    c.height = swap ? w : h;
+    const ctx = c.getContext('2d');
+    ctx.translate(c.width/2, c.height/2);
+    ctx.rotate(rot * Math.PI/180);
+    ctx.drawImage(src, sx, sy, sw, sh, -w/2, -h/2, w, h);
+    ctx.setTransform(1,0,0,1,0,0);
+    if(page.mode === 'bw') applyBW(c);
+    return c;
+  }
+
+  // ---------- crop <-> rotation coordinate mapping (normalized rects) ----------
+  // Rotated-view rect {x,y,w,h} -> original-space rect, for clockwise rotation "rot"
+  function rotatedToOriginal(r, rot){
+    const u0=r.x, u1=r.x+r.w, v0=r.y, v1=r.y+r.h;
+    if(rot === 90)  return {x: v0,     y: 1-u1,   w: v1-v0, h: u1-u0};
+    if(rot === 180) return {x: 1-u1,   y: 1-v1,   w: u1-u0, h: v1-v0};
+    if(rot === 270) return {x: 1-v1,   y: u0,     w: v1-v0, h: u1-u0};
+    return {x:u0, y:v0, w:u1-u0, h:v1-v0};
+  }
+  // Original-space rect -> rotated-view rect
+  function originalToRotated(r, rot){
+    const x0=r.x, x1=r.x+r.w, y0=r.y, y1=r.y+r.h;
+    if(rot === 90)  return {x: 1-y1,  y: x0,    w: y1-y0, h: x1-x0};
+    if(rot === 180) return {x: 1-x1,  y: 1-y1,  w: x1-x0, h: y1-y0};
+    if(rot === 270) return {x: y0,    y: 1-x1,  w: y1-y0, h: x1-x0};
+    return {x:x0, y:y0, w:x1-x0, h:y1-y0};
+  }
+
+  // ---------- adding pages ----------
+  async function addFiles(fileList){
+    const files = Array.from(fileList || []).filter(f=>f.type.startsWith('image/'));
+    if(!files.length) return;
+    toast('Adding ' + files.length + (files.length===1?' page…':' pages…'), 4000);
+    for(const f of files){
+      try{
+        const {im, url} = await loadImage(f);
+        const base = downscale(im);
+        URL.revokeObjectURL(url);
+        const keep = new Image();
+        await new Promise(r=>{ keep.onload=r; keep.src = base.toDataURL('image/jpeg', 0.88); });
+        keep.width = base.width; keep.height = base.height;
+        pages.push({id: nextId++, img: keep, mode: defaultMode, rot: 0, crop: null});
+      }catch(e){
+        toast('One photo could not be read');
+      }
+    }
+    renderList();
+    toast(pages.length + (pages.length===1?' page ready':' pages ready'));
+  }
+
+  // ---------- list UI ----------
+  function renderList(){
+    countEl.textContent = pages.length + (pages.length===1?' page':' pages');
+    emptyEl.style.display = pages.length ? 'none' : 'block';
+    $('btnPdf').disabled = $('btnImg').disabled = pages.length === 0;
+    listEl.innerHTML = '';
+    pages.forEach((pg, i)=>{
+      const card = document.createElement('div');
+      card.className = 'card';
+
+      const tw = document.createElement('div');
+      tw.className = 'thumbwrap';
+      const timg = document.createElement('img');
+      timg.alt = 'Page ' + (i+1);
+      timg.src = renderPage(pg, THUMB_SIDE).toDataURL('image/jpeg', 0.7);
+      tw.appendChild(timg);
+      tw.addEventListener('click', ()=>openCrop(pg, i));
+
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.innerHTML = '<div class="pnum">Page ' + (i+1) + ' of ' + pages.length + '</div>';
+
+      const tools = document.createElement('div');
+      tools.className = 'tools';
+
+      const mk = (label, title, fn, cls)=>{
+        const b = document.createElement('button');
+        b.className = 'tool' + (cls ? ' '+cls : '');
+        b.innerHTML = label; b.title = title;
+        b.addEventListener('click', fn);
+        return b;
+      };
+
+      tools.appendChild(mk('&#9986;', 'Crop this page', ()=>openCrop(pg, i), pg.crop ? 'on' : ''));
+      tools.appendChild(mk('&#8635;', 'Rotate', ()=>{ pg.rot=(pg.rot+90)%360; renderList(); }));
+      tools.appendChild(mk(pg.mode==='bw' ? 'B&amp;W' : 'Color',
+        'Switch color / black & white',
+        ()=>{ pg.mode = pg.mode==='bw' ? 'color' : 'bw'; renderList(); },
+        pg.mode==='bw' ? 'on' : ''));
+      const up = mk('&#8593;', 'Move up', ()=>{ [pages[i-1],pages[i]]=[pages[i],pages[i-1]]; renderList(); });
+      up.disabled = (i===0);
+      tools.appendChild(up);
+      const dn = mk('&#8595;', 'Move down', ()=>{ [pages[i+1],pages[i]]=[pages[i],pages[i+1]]; renderList(); });
+      dn.disabled = (i===pages.length-1);
+      tools.appendChild(dn);
+      tools.appendChild(mk('&#10005;', 'Delete page', ()=>{ pages.splice(i,1); renderList(); }, 'del'));
+
+      meta.appendChild(tools);
+      card.appendChild(tw);
+      card.appendChild(meta);
+      listEl.appendChild(card);
+    });
+  }
+
+  // ---------- crop editor ----------
+  const cropView = $('cropView'), cropImg = $('cropImg'), cropBox = $('cropBox'), cropWrap = $('cropWrap');
+  let ce = null; // {pg, dispW, dispH, box:{x,y,w,h} in display px}
+  const MIN_BOX = 44;
+
+  function openCrop(pg, index){
+    ce = {pg: pg, dispW: 0, dispH: 0, box: null};
+    $('cropHead').textContent = 'Crop page ' + (index+1) + ' — drag corners or move the box';
+    // show the full (uncropped) page in its current rotation & color mode
+    const full = renderPage(pg, 1600, true);
+    cropImg.onload = function(){
+      requestAnimationFrame(()=>{
+        const r = cropImg.getBoundingClientRect();
+        ce.dispW = r.width; ce.dispH = r.height;
+        cropWrap.style.width = r.width + 'px';
+        cropWrap.style.height = r.height + 'px';
+        const rot = ((pg.rot % 360) + 360) % 360;
+        let b;
+        if(pg.crop){
+          const rr = originalToRotated(pg.crop, rot);
+          b = {x: rr.x*r.width, y: rr.y*r.height, w: rr.w*r.width, h: rr.h*r.height};
+        }else{
+          b = {x: 0, y: 0, w: r.width, h: r.height};
+        }
+        ce.box = b;
+        drawBox();
+      });
+    };
+    cropImg.src = full.toDataURL('image/jpeg', 0.8);
+    cropView.hidden = false;
+  }
+
+  function drawBox(){
+    const b = ce.box;
+    cropBox.style.left = b.x + 'px';
+    cropBox.style.top = b.y + 'px';
+    cropBox.style.width = b.w + 'px';
+    cropBox.style.height = b.h + 'px';
+  }
+
+  function clampBox(b){
+    b.w = Math.max(MIN_BOX, Math.min(b.w, ce.dispW));
+    b.h = Math.max(MIN_BOX, Math.min(b.h, ce.dispH));
+    b.x = Math.max(0, Math.min(b.x, ce.dispW - b.w));
+    b.y = Math.max(0, Math.min(b.y, ce.dispH - b.h));
+    return b;
+  }
+
+  let drag = null; // {mode:'move'|corner, startX, startY, box0}
+  function onDown(e){
+    if(!ce || !ce.box) return;
+    const t = e.target.closest('.handle');
+    drag = {
+      mode: t ? t.dataset.c : 'move',
+      startX: e.clientX, startY: e.clientY,
+      box0: {x: ce.box.x, y: ce.box.y, w: ce.box.w, h: ce.box.h}
+    };
+    e.preventDefault();
+    cropBox.setPointerCapture && cropBox.setPointerCapture(e.pointerId);
+  }
+  function onMove(e){
+    if(!drag || !ce) return;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    const b0 = drag.box0;
+    let b = {x: b0.x, y: b0.y, w: b0.w, h: b0.h};
+    if(drag.mode === 'move'){
+      b.x = b0.x + dx; b.y = b0.y + dy;
+    }else{
+      let x0 = b0.x, y0 = b0.y, x1 = b0.x + b0.w, y1 = b0.y + b0.h;
+      if(drag.mode === 'nw'){ x0 += dx; y0 += dy; }
+      if(drag.mode === 'ne'){ x1 += dx; y0 += dy; }
+      if(drag.mode === 'sw'){ x0 += dx; y1 += dy; }
+      if(drag.mode === 'se'){ x1 += dx; y1 += dy; }
+      x0 = Math.max(0, Math.min(x0, x1 - MIN_BOX));
+      y0 = Math.max(0, Math.min(y0, y1 - MIN_BOX));
+      x1 = Math.min(ce.dispW, Math.max(x1, x0 + MIN_BOX));
+      y1 = Math.min(ce.dispH, Math.max(y1, y0 + MIN_BOX));
+      b = {x: x0, y: y0, w: x1 - x0, h: y1 - y0};
+    }
+    ce.box = clampBox(b);
+    drawBox();
+    e.preventDefault();
+  }
+  function onUp(){ drag = null; }
+
+  cropBox.addEventListener('pointerdown', onDown);
+  window.addEventListener('pointermove', onMove, {passive:false});
+  window.addEventListener('pointerup', onUp);
+  window.addEventListener('pointercancel', onUp);
+
+  $('cropCancel').addEventListener('click', ()=>{ cropView.hidden = true; ce = null; });
+  $('cropReset').addEventListener('click', ()=>{
+    if(!ce) return;
+    ce.box = {x:0, y:0, w:ce.dispW, h:ce.dispH};
+    drawBox();
+  });
+  $('cropApply').addEventListener('click', ()=>{
+    if(!ce || !ce.box) return;
+    const b = ce.box;
+    const rr = {x: b.x/ce.dispW, y: b.y/ce.dispH, w: b.w/ce.dispW, h: b.h/ce.dispH};
+    // treat a near-full box as "no crop"
+    if(rr.x < 0.005 && rr.y < 0.005 && rr.w > 0.99 && rr.h > 0.99){
+      ce.pg.crop = null;
+    }else{
+      const rot = ((ce.pg.rot % 360) + 360) % 360;
+      const orig = rotatedToOriginal(rr, rot);
+      ce.pg.crop = {
+        x: Math.max(0, Math.min(1, orig.x)),
+        y: Math.max(0, Math.min(1, orig.y)),
+        w: Math.max(0.01, Math.min(1, orig.w)),
+        h: Math.max(0.01, Math.min(1, orig.h))
+      };
+    }
+    cropView.hidden = true; ce = null;
+    renderList();
+    toast('Crop applied');
+  });
+
+  // ---------- export ----------
+  function stamp(){
+    const d = new Date(), z = n => String(n).padStart(2,'0');
+    return d.getFullYear() + z(d.getMonth()+1) + z(d.getDate()) + '-' + z(d.getHours()) + z(d.getMinutes());
+  }
+
+  function download(blob, name){
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+  }
+
+  async function exportPDF(){
+    if(busy || !pages.length) return;
+    busy = true; toast('Building PDF…', 8000);
+    try{
+      await new Promise(r=>setTimeout(r,30));
+      const jsPDF = window.jspdf.jsPDF;
+      let doc = null;
+      for(const pg of pages){
+        const c = renderPage(pg, MAX_SIDE);
+        const wpt = c.width * 0.5, hpt = c.height * 0.5;
+        const orient = wpt > hpt ? 'l' : 'p';
+        if(!doc){
+          doc = new jsPDF({orientation:orient, unit:'pt', format:[wpt,hpt], compress:true});
+        }else{
+          doc.addPage([wpt,hpt], orient);
+        }
+        doc.addImage(c.toDataURL('image/jpeg',0.82), 'JPEG', 0, 0, wpt, hpt);
+        await new Promise(r=>setTimeout(r,0));
+      }
+      download(doc.output('blob'), 'scan-' + stamp() + '.pdf');
+      toast('PDF saved to your downloads');
+    }catch(e){
+      toast('PDF failed — try again');
+    }
+    busy = false;
+  }
+
+  async function exportImage(){
+    if(busy || !pages.length) return;
+    busy = true; toast('Building image…', 8000);
+    try{
+      await new Promise(r=>setTimeout(r,30));
+      const W = 1500, GAP = 24;
+      const rendered = pages.map(pg=>renderPage(pg, MAX_SIDE));
+      const heights = rendered.map(c=>Math.round(c.height * W / c.width));
+      const total = heights.reduce((a,b)=>a+b,0) + GAP*(rendered.length-1);
+      const big = document.createElement('canvas');
+      big.width = W; big.height = total;
+      const ctx = big.getContext('2d');
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0,0,W,total);
+      let y = 0;
+      rendered.forEach((c,i)=>{
+        ctx.drawImage(c, 0, y, W, heights[i]);
+        y += heights[i] + GAP;
+      });
+      big.toBlob(b=>{
+        download(b, 'scan-' + stamp() + '.jpg');
+        toast('Image saved to your downloads');
+        busy = false;
+      }, 'image/jpeg', 0.85);
+    }catch(e){
+      toast('Image failed — try again');
+      busy = false;
+    }
+  }
+
+  // ---------- in-app camera with torch ----------
+  const camView = $('camView'), camVideo = $('camVideo');
+  let camStream = null, camTrack = null, torchOn = false, camShots = 0;
+
+  async function openCamera(){
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+      toast('Chrome blocks the camera for saved files — see note below the app', 5000);
+      $('fileCam').click();
+      return;
+    }
+    try{
+      camStream = await navigator.mediaDevices.getUserMedia({
+        video: {facingMode: {ideal:'environment'}, width:{ideal:4096}, height:{ideal:3072}},
+        audio: false
+      });
+    }catch(e){
+      toast('Camera view not allowed here — using phone camera instead', 5000);
+      $('fileCam').click();
+      return;
+    }
+    camTrack = camStream.getVideoTracks()[0];
+    camVideo.srcObject = camStream;
+    camShots = 0; updateCamNote();
+    camView.hidden = false;
+    // switch the torch on automatically once the camera has started
+    setTimeout(()=>setTorch(true), 600);
+  }
+
+  async function setTorch(on){
+    if(!camTrack){ return; }
+    const caps = camTrack.getCapabilities ? camTrack.getCapabilities() : {};
+    if(!caps.torch){
+      torchOn = false;
+      if(on) toast('Torch not available on this camera');
+    }else{
+      try{
+        await camTrack.applyConstraints({advanced:[{torch: !!on}]});
+        torchOn = !!on;
+      }catch(e){
+        torchOn = false;
+        if(on) toast('Could not switch the torch on');
+      }
+    }
+    $('camTorch').classList.toggle('on', torchOn);
+  }
+
+  function updateCamNote(){
+    $('camNote').textContent = camShots === 0
+      ? 'Line up the page, then tap the round button'
+      : camShots + (camShots===1 ? ' page taken — keep going or tap Done' : ' pages taken — keep going or tap Done');
+  }
+
+  async function snap(){
+    if(!camVideo.videoWidth) return;
+    const fl = $('camFlash');
+    fl.classList.add('go');
+    setTimeout(()=>fl.classList.remove('go'), 70);
+    const c = document.createElement('canvas');
+    const s = Math.min(1, MAX_SIDE / Math.max(camVideo.videoWidth, camVideo.videoHeight));
+    c.width = Math.round(camVideo.videoWidth * s);
+    c.height = Math.round(camVideo.videoHeight * s);
+    c.getContext('2d').drawImage(camVideo, 0, 0, c.width, c.height);
+    const keep = new Image();
+    await new Promise(r=>{ keep.onload=r; keep.src = c.toDataURL('image/jpeg', 0.88); });
+    keep.width = c.width; keep.height = c.height;
+    pages.push({id: nextId++, img: keep, mode: defaultMode, rot: 0, crop: null});
+    camShots++; updateCamNote();
+    renderList();
+  }
+
+  function closeCamera(){
+    setTorch(false);
+    if(camStream){ camStream.getTracks().forEach(t=>t.stop()); }
+    camStream = null; camTrack = null; torchOn = false;
+    camView.hidden = true;
+    if(camShots) toast(camShots + (camShots===1?' page added':' pages added'));
+  }
+
+  $('camTorch').addEventListener('click', ()=>setTorch(!torchOn));
+  $('camSnap').addEventListener('click', snap);
+  $('camDone').addEventListener('click', closeCamera);
+
+  // ---------- wiring ----------
+  $('btnScan').addEventListener('click', openCamera);
+  $('btnGallery').addEventListener('click', ()=>$('fileGal').click());
+  $('fileCam').addEventListener('change', e=>{ addFiles(e.target.files); e.target.value=''; });
+  $('fileGal').addEventListener('change', e=>{ addFiles(e.target.files); e.target.value=''; });
+  $('btnPdf').addEventListener('click', exportPDF);
+  $('btnImg').addEventListener('click', exportImage);
+  $('modeSeg').addEventListener('click', e=>{
+    const b = e.target.closest('button'); if(!b) return;
+    defaultMode = b.dataset.mode;
+    document.querySelectorAll('#modeSeg button').forEach(x=>x.classList.toggle('on', x===b));
+  });
+
+  renderList();
+})();
+</script>
+</body>
+</html>
