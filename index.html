@@ -178,7 +178,7 @@
 <body>
 
 <header>
-  <h1>Pocket Scanner <span style="color:var(--muted); font-size:12px; font-weight:400;">v7</span></h1>
+  <h1>Pocket Scanner <span style="color:var(--muted); font-size:12px; font-weight:400;">v8</span></h1>
   <span class="count" id="count">0 pages</span>
 </header>
 
@@ -907,8 +907,38 @@
       : camShots + (camShots===1 ? ' page taken — keep going or tap Done' : ' pages taken — keep going or tap Done');
   }
 
+  // ---------- audible + vibration feedback ----------
+  let audioCtx = null;
+  function ensureAudio(){
+    try{
+      if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if(audioCtx.state === 'suspended') audioCtx.resume();
+    }catch(e){}
+  }
+  function beep(freqStart, freqEnd, dur, vol){
+    if(!audioCtx) return;
+    try{
+      const t = audioCtx.currentTime;
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.type = 'square';
+      o.frequency.setValueAtTime(freqStart, t);
+      o.frequency.exponentialRampToValueAtTime(freqEnd, t + dur*0.8);
+      g.gain.setValueAtTime(vol, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      o.connect(g); g.connect(audioCtx.destination);
+      o.start(t); o.stop(t + dur + 0.02);
+    }catch(e){}
+  }
+  function playTick(){ beep(880, 880, 0.05, 0.12); }
+  function playShutter(){
+    beep(1500, 650, 0.09, 0.3);
+    if(navigator.vibrate){ try{ navigator.vibrate(70); }catch(e){} }
+  }
+
   async function snap(){
     if(!camVideo.videoWidth) return;
+    playShutter();
     const fl = $('camFlash');
     fl.classList.add('go');
     setTimeout(()=>fl.classList.remove('go'), 70);
@@ -954,6 +984,7 @@
     clearTimeout(countdownT);
     if(secs <= 0){ done(); return; }
     $('camNote').textContent = 'Scanning in ' + secs + '…';
+    playTick();
     countdownT = setTimeout(()=>countdown(secs-1, done), 1000);
   }
 
@@ -976,6 +1007,7 @@
 
   function shutterPress(){
     if(camView.hidden) return;
+    ensureAudio();
     if(timerMode === 1){
       countdown(3, async ()=>{ await snap(); updateCamNote(); });
     }else if(timerMode === 2){
