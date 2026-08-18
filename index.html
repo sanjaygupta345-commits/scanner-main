@@ -99,6 +99,20 @@
   .toast.show{opacity:1;}
   input[type=file]{display:none;}
 
+  .modebar select{flex:1; background:var(--surface); color:var(--text); border:1px solid var(--line);
+    border-radius:10px; min-height:44px; font:inherit; font-size:13px; padding:0 10px;}
+  .modebar .tool{min-height:44px;}
+
+  .ocrchk{display:flex; gap:8px; align-items:flex-start; max-width:560px; margin:0 auto 10px;
+    font-size:13px; color:var(--muted); line-height:1.35;}
+  .ocrchk input{width:18px; height:18px; margin-top:1px; accent-color:var(--accent); flex:0 0 auto;}
+
+  .textview{position:fixed; inset:0; z-index:35; background:#0B0D10; display:flex; flex-direction:column;}
+  .textview[hidden]{display:none;}
+  .textview textarea{flex:1; margin:10px 16px 0; background:var(--surface); color:var(--text);
+    border:1px solid var(--line); border-radius:12px; padding:12px;
+    font:14px/1.55 ui-monospace, Menlo, Consolas, monospace; resize:none;}
+
   /* ---------- Camera with torch ---------- */
   .camview{position:fixed; inset:0; z-index:30; background:#000; display:flex; flex-direction:column;}
   .camview[hidden]{display:none;}
@@ -164,7 +178,7 @@
 <body>
 
 <header>
-  <h1>Pocket Scanner <span style="color:var(--muted); font-size:12px; font-weight:400;">v3</span></h1>
+  <h1>Pocket Scanner <span style="color:var(--muted); font-size:12px; font-weight:400;">v6</span></h1>
   <span class="count" id="count">0 pages</span>
 </header>
 
@@ -182,20 +196,64 @@
   </div>
 
   <div class="modebar">
-    <span>New pages</span>
+    <span>Scan as</span>
     <div class="seg" id="modeSeg">
       <button data-mode="color" class="on">Color</button>
       <button data-mode="bw">B&amp;W text</button>
     </div>
   </div>
 
+  <div class="modebar">
+    <span>Text language</span>
+    <select id="ocrLang">
+      <option value="eng" selected>English</option>
+      <option value="por">Português</option>
+      <option value="nld">Nederlands</option>
+      <option value="deu">Deutsch</option>
+      <option value="fra">Français</option>
+      <option value="spa">Español</option>
+      <option value="eng+por">English + Português</option>
+      <option value="hin">हिन्दी (Hindi)</option>
+      <option value="san">Sanskrit (Devanāgarī)</option>
+    </select>
+    <button class="tool" id="btnOcr">Extract text</button>
+  </div>
+
   <div id="list"></div>
 </main>
 
 <div class="exportbar">
+  <label class="ocrchk">
+    <input type="checkbox" id="chkOcr">
+    <span>Searchable PDF — adds an invisible text layer so you can search and copy text (slower; needs internet the first time)</span>
+  </label>
   <div class="inner">
     <button class="btn btn-pdf" id="btnPdf" disabled>Save as PDF</button>
     <button class="btn btn-img" id="btnImg" disabled>Save as one image</button>
+  </div>
+</div>
+
+<!-- Recognized text -->
+<div class="textview" id="textView" hidden>
+  <div class="crophead">Recognized text — check and edit before copying</div>
+  <textarea id="textOut" spellcheck="false"></textarea>
+  <div class="modebar" style="margin:10px 16px 0;">
+    <span>Translate to</span>
+    <select id="trLang">
+      <option value="en" selected>English</option>
+      <option value="pt">Português</option>
+      <option value="nl">Nederlands</option>
+      <option value="de">Deutsch</option>
+      <option value="fr">Français</option>
+      <option value="es">Español</option>
+      <option value="hi">हिन्दी</option>
+    </select>
+    <button class="tool" id="btnTranslate">Translate</button>
+  </div>
+  <div class="cropbar">
+    <button class="btn btn-ghost" id="textClose">Close</button>
+    <button class="btn btn-ghost" id="textSave">Save .txt</button>
+    <button class="btn btn-primary" id="textCopy">Copy</button>
   </div>
 </div>
 
@@ -535,6 +593,163 @@
     toast('Crop applied');
   });
 
+  // ---------- OCR (runs on the phone, nothing is uploaded) ----------
+  let tessLoading = null, ocrStage = '';
+
+  function loadScript(src){
+    return new Promise((res, rej)=>{
+      const s = document.createElement('script');
+      s.src = src; s.onload = res; s.onerror = rej;
+      document.head.appendChild(s);
+    });
+  }
+  function loadTesseract(){
+    if(window.Tesseract) return Promise.resolve();
+    if(!tessLoading){
+      tessLoading = loadScript('https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js')
+        .catch(()=>loadScript('https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js'));
+    }
+    return tessLoading;
+  }
+
+  async function makeOcrWorker(){
+    await loadTesseract();
+    const lang = $('ocrLang').value;
+    return await Tesseract.createWorker(lang, 1, {
+      logger: m=>{
+        if(m.status === 'recognizing text'){
+          toast(ocrStage + ' ' + Math.round(m.progress*100) + '%', 60000);
+        }
+      }
+    });
+  }
+
+  async function extractText(){
+    if(busy) return;
+    if(!pages.length){ toast('Scan some pages first'); return; }
+    busy = true;
+    toast('Preparing text reader… first time this downloads the language (a few MB)', 60000);
+    try{
+      const worker = await makeOcrWorker();
+      const out = [];
+      try{
+        for(let i=0; i<pages.length; i++){
+          ocrStage = 'Reading page ' + (i+1) + ' of ' + pages.length + ' —';
+          const result = await worker.recognize(renderPage(pages[i], 1700));
+          out.push('--- Page ' + (i+1) + ' ---\n' + (result.data.text || '').trim());
+        }
+      } finally {
+        await worker.terminate();
+      }
+      $('textOut').value = out.join('\n\n');
+      trOriginal = null;
+      $('btnTranslate').textContent = 'Translate';
+      $('textView').hidden = false;
+      toast('Done — check the text for reading mistakes');
+    }catch(e){
+      toast('Text reading failed — check your internet connection and try again', 4500);
+    }
+    busy = false;
+  }
+
+  // ---------- translation (sends text to an online service ONLY when you tap Translate) ----------
+  let trOriginal = null; // holds the original while a translation is shown
+
+  function chunkText(t, max){
+    const parts = [];
+    let rest = t;
+    while(rest.length > max){
+      let cut = rest.lastIndexOf('\n', max);
+      if(cut < max*0.5) cut = rest.lastIndexOf('. ', max);
+      if(cut < max*0.5) cut = rest.lastIndexOf(' ', max);
+      if(cut <= 0) cut = max;
+      parts.push(rest.slice(0, cut+1));
+      rest = rest.slice(cut+1);
+    }
+    if(rest) parts.push(rest);
+    return parts;
+  }
+
+  async function gtxTranslate(text, target){
+    const url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=' +
+      encodeURIComponent(target) + '&dt=t&q=' + encodeURIComponent(text);
+    const r = await fetch(url);
+    if(!r.ok) throw new Error('http ' + r.status);
+    const j = await r.json();
+    if(!j || !j[0]) return '';
+    return j[0].map(x => (x && x[0]) ? x[0] : '').join('');
+  }
+
+  async function myMemoryTranslate(text, target){
+    const map = {eng:'en', por:'pt', nld:'nl', deu:'de', fra:'fr', spa:'es', hin:'hi', san:'sa'};
+    const s = map[($('ocrLang').value || 'eng').slice(0,3)] || 'en';
+    const out = [];
+    for(const part of chunkText(text, 450)){
+      const url = 'https://api.mymemory.translated.net/get?q=' + encodeURIComponent(part) +
+        '&langpair=' + s + '%7C' + target;
+      const r = await fetch(url);
+      const j = await r.json();
+      out.push(j && j.responseData && j.responseData.translatedText ? j.responseData.translatedText : '');
+    }
+    return out.join(' ').trim();
+  }
+
+  async function translateText(){
+    const ta = $('textOut');
+    if(trOriginal !== null){
+      ta.value = trOriginal;
+      trOriginal = null;
+      $('btnTranslate').textContent = 'Translate';
+      return;
+    }
+    const text = ta.value.trim();
+    if(!text){ toast('Nothing to translate yet'); return; }
+    const target = $('trLang').value;
+    toast('Translating…', 60000);
+    try{
+      const parts = chunkText(text, 1600);
+      const out = [];
+      for(let i=0; i<parts.length; i++){
+        if(parts.length > 1) toast('Translating part ' + (i+1) + ' of ' + parts.length + '…', 60000);
+        out.push(await gtxTranslate(parts[i], target));
+      }
+      trOriginal = ta.value;
+      ta.value = out.join('');
+      $('btnTranslate').textContent = 'Show original';
+      toast('Translated — tap Show original to switch back');
+    }catch(e){
+      try{
+        const t2 = await myMemoryTranslate(text, target);
+        if(!t2) throw new Error('empty');
+        trOriginal = ta.value;
+        ta.value = t2;
+        $('btnTranslate').textContent = 'Show original';
+        toast('Translated — tap Show original to switch back');
+      }catch(e2){
+        toast('Translation failed — check your internet connection and try again', 4500);
+      }
+    }
+  }
+
+  $('btnTranslate').addEventListener('click', translateText);
+
+  $('btnOcr').addEventListener('click', extractText);
+  $('textClose').addEventListener('click', ()=>{ $('textView').hidden = true; });
+  $('textCopy').addEventListener('click', async ()=>{
+    try{
+      await navigator.clipboard.writeText($('textOut').value);
+      toast('Copied');
+    }catch(e){
+      $('textOut').select();
+      document.execCommand('copy');
+      toast('Copied');
+    }
+  });
+  $('textSave').addEventListener('click', ()=>{
+    const b = new Blob([$('textOut').value], {type:'text/plain;charset=utf-8'});
+    download(b, 'scan-' + stamp() + '.txt');
+  });
+
   // ---------- export ----------
   function stamp(){
     const d = new Date(), z = n => String(n).padStart(2,'0');
@@ -552,13 +767,21 @@
 
   async function exportPDF(){
     if(busy || !pages.length) return;
-    busy = true; toast('Building PDF…', 8000);
+    const wantOcr = $('chkOcr').checked;
+    const lang = $('ocrLang').value;
+    if(wantOcr && (lang === 'hin' || lang === 'san')){
+      toast('The searchable layer only works for Latin alphabets so far — use Extract text instead', 5000);
+      return;
+    }
+    busy = true; toast(wantOcr ? 'Building searchable PDF… this takes a while' : 'Building PDF…', 60000);
+    let worker = null;
     try{
       await new Promise(r=>setTimeout(r,30));
+      if(wantOcr){ worker = await makeOcrWorker(); }
       const jsPDF = window.jspdf.jsPDF;
       let doc = null;
-      for(const pg of pages){
-        const c = renderPage(pg, MAX_SIDE);
+      for(let i=0; i<pages.length; i++){
+        const c = renderPage(pages[i], MAX_SIDE);
         const wpt = c.width * 0.5, hpt = c.height * 0.5;
         const orient = wpt > hpt ? 'l' : 'p';
         if(!doc){
@@ -567,13 +790,37 @@
           doc.addPage([wpt,hpt], orient);
         }
         doc.addImage(c.toDataURL('image/jpeg',0.82), 'JPEG', 0, 0, wpt, hpt);
+        if(worker){
+          ocrStage = 'Reading page ' + (i+1) + ' of ' + pages.length + ' —';
+          const result = await worker.recognize(c);
+          const words = (result.data && result.data.words) || [];
+          const k = wpt / c.width;
+          try{
+            doc.saveGraphicsState();
+            doc.setGState(new doc.GState({opacity: 0}));
+            doc.setFont('helvetica','normal');
+            doc.setTextColor(0,0,0);
+            for(const wd of words){
+              const t = (wd.text || '').trim();
+              if(!t || !wd.bbox) continue;
+              const bh = (wd.bbox.y1 - wd.bbox.y0) * k;
+              if(bh <= 1) continue;
+              try{
+                doc.setFontSize(Math.max(4, bh * 1.05));
+                doc.text(t, wd.bbox.x0 * k, wd.bbox.y0 * k, {baseline:'top'});
+              }catch(e){ /* skip words the PDF font cannot encode */ }
+            }
+            doc.restoreGraphicsState();
+          }catch(e){ /* if the invisible layer fails, the PDF is still fine without it */ }
+        }
         await new Promise(r=>setTimeout(r,0));
       }
       download(doc.output('blob'), 'scan-' + stamp() + '.pdf');
-      toast('PDF saved to your downloads');
+      toast(wantOcr ? 'Searchable PDF saved to your downloads' : 'PDF saved to your downloads');
     }catch(e){
-      toast('PDF failed — try again');
+      toast('PDF failed — try again', 4000);
     }
+    if(worker){ try{ await worker.terminate(); }catch(e){} }
     busy = false;
   }
 
@@ -700,6 +947,13 @@
     const b = e.target.closest('button'); if(!b) return;
     defaultMode = b.dataset.mode;
     document.querySelectorAll('#modeSeg button').forEach(x=>x.classList.toggle('on', x===b));
+    if(pages.length){
+      pages.forEach(pg=>{ pg.mode = defaultMode; });
+      renderList();
+      toast('All pages set to ' + (defaultMode==='bw' ? 'B&W' : 'color'));
+    }else{
+      toast('New scans will be ' + (defaultMode==='bw' ? 'B&W' : 'color'));
+    }
   });
 
   renderList();
