@@ -184,7 +184,7 @@
 <body>
 
 <header>
-  <h1>Pocket Scanner <span style="color:var(--muted); font-size:12px; font-weight:400;">v9</span></h1>
+  <h1>Pocket Scanner <span style="color:var(--muted); font-size:12px; font-weight:400;">v10</span></h1>
   <span class="count" id="count">0 pages</span>
   <button class="clearbtn" id="btnClear" hidden>Clear all</button>
 </header>
@@ -1021,6 +1021,9 @@
 
   function closeCamera(){
     stopAuto(); clearTimeout(countdownT);
+    timerMode = 0;
+    $('camTimer').textContent = TIMER_LABELS[0];
+    $('camTimer').classList.remove('on');
     setTorch(false);
     if(camStream){ camStream.getTracks().forEach(t=>t.stop()); }
     camStream = null; camTrack = null; torchOn = false;
@@ -1047,7 +1050,13 @@
     $('camTimer').textContent = TIMER_LABELS[timerMode];
     $('camTimer').classList.toggle('on', timerMode !== 0);
     if(timerMode === 1) toast('Timer: 3 second delay before each scan');
-    if(timerMode === 2) toast('Auto: tap the round button to start scanning every 5 s');
+    if(timerMode === 2){
+      ensureAudio();
+      autoRunning = true;
+      toast('Auto scanning started — tap Auto again, or the round button, to stop');
+      autoLoop();
+      return;
+    }
     if(timerMode === 0) toast('Timer off');
     updateCamNote();
   });
