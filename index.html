@@ -85,7 +85,7 @@
     padding:12px 16px calc(12px + env(safe-area-inset-bottom));
   }
   .exportbar .inner{max-width:560px; margin:0 auto; display:flex; gap:10px;}
-  .exportbar .btn{flex:1; font-size:15px;}
+  .exportbar .btn{flex:1; font-size:14px; padding:14px 6px;}
   .btn-pdf{background:var(--accent); color:var(--accent-ink);}
   .btn-img{background:var(--surface); color:var(--text); border:1px solid var(--line);}
   .btn[disabled]{opacity:.4; pointer-events:none;}
@@ -106,6 +106,12 @@
   .ocrchk{display:flex; gap:8px; align-items:flex-start; max-width:560px; margin:0 auto 10px;
     font-size:13px; color:var(--muted); line-height:1.35;}
   .ocrchk input{width:18px; height:18px; margin-top:1px; accent-color:var(--accent); flex:0 0 auto;}
+
+  .clearbtn{appearance:none; border:1px solid var(--line); background:transparent; color:var(--danger);
+    border-radius:8px; font:inherit; font-size:12px; padding:4px 10px; margin-left:10px; cursor:pointer;}
+  .namebar{display:flex; gap:8px; max-width:560px; margin:0 auto 10px;}
+  .namebar input{flex:1; min-width:0; background:var(--surface); border:1px solid var(--line); color:var(--text);
+    border-radius:10px; min-height:44px; padding:0 12px; font:inherit; font-size:14px;}
 
   .textview{position:fixed; inset:0; z-index:35; background:#0B0D10; display:flex; flex-direction:column;}
   .textview[hidden]{display:none;}
@@ -178,8 +184,9 @@
 <body>
 
 <header>
-  <h1>Pocket Scanner <span style="color:var(--muted); font-size:12px; font-weight:400;">v8</span></h1>
+  <h1>Pocket Scanner <span style="color:var(--muted); font-size:12px; font-weight:400;">v9</span></h1>
   <span class="count" id="count">0 pages</span>
+  <button class="clearbtn" id="btnClear" hidden>Clear all</button>
 </header>
 
 <main>
@@ -219,17 +226,35 @@
     <button class="tool" id="btnOcr">Extract text</button>
   </div>
 
+  <div class="modebar">
+    <span>Auto scan every</span>
+    <div class="seg" id="speedSeg">
+      <button data-s="3">3 s</button>
+      <button data-s="5" class="on">5 s</button>
+      <button data-s="8">8 s</button>
+    </div>
+  </div>
+
   <div id="list"></div>
 </main>
 
 <div class="exportbar">
+  <div class="namebar">
+    <input id="fileName" type="text" placeholder="File name (optional)" autocomplete="off">
+    <div class="seg" id="qualSeg">
+      <button data-q="small">Smaller</button>
+      <button data-q="normal" class="on">Normal</button>
+      <button data-q="best">Best</button>
+    </div>
+  </div>
   <label class="ocrchk">
     <input type="checkbox" id="chkOcr">
     <span>Searchable PDF — adds an invisible text layer so you can search and copy text (slower; needs internet the first time)</span>
   </label>
   <div class="inner">
-    <button class="btn btn-pdf" id="btnPdf" disabled>Save as PDF</button>
-    <button class="btn btn-img" id="btnImg" disabled>Save as one image</button>
+    <button class="btn btn-pdf" id="btnPdf" disabled>Save PDF</button>
+    <button class="btn btn-img" id="btnShare" disabled>Share PDF</button>
+    <button class="btn btn-img" id="btnImg" disabled>Save image</button>
   </div>
 </div>
 
@@ -425,7 +450,8 @@
   function renderList(){
     countEl.textContent = pages.length + (pages.length===1?' page':' pages');
     emptyEl.style.display = pages.length ? 'none' : 'block';
-    $('btnPdf').disabled = $('btnImg').disabled = pages.length === 0;
+    $('btnPdf').disabled = $('btnImg').disabled = $('btnShare').disabled = pages.length === 0;
+    $('btnClear').hidden = pages.length === 0;
     listEl.innerHTML = '';
     pages.forEach((pg, i)=>{
       const card = document.createElement('div');
@@ -473,6 +499,7 @@
       card.appendChild(meta);
       listEl.appendChild(card);
     });
+    savePages();
   }
 
   // ---------- crop editor ----------
@@ -752,6 +779,19 @@
   });
 
   // ---------- export ----------
+  function exportParams(){
+    const b = document.querySelector('#qualSeg button.on');
+    const q = b ? b.dataset.q : 'normal';
+    if(q === 'small') return {side: 1400, jpeg: 0.6};
+    if(q === 'best')  return {side: 2000, jpeg: 0.92};
+    return {side: 2000, jpeg: 0.82};
+  }
+  function outName(ext){
+    let n = ($('fileName').value || '').trim().replace(/[\\\/:*?"<>|]+/g, '').slice(0, 60);
+    if(!n) n = 'scan-' + stamp();
+    return n + '.' + ext;
+  }
+
   function stamp(){
     const d = new Date(), z = n => String(n).padStart(2,'0');
     return d.getFullYear() + z(d.getMonth()+1) + z(d.getDate()) + '-' + z(d.getHours()) + z(d.getMinutes());
@@ -766,7 +806,7 @@
     setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 4000);
   }
 
-  async function exportPDF(){
+  async function exportPDF(shareIt){
     if(busy || !pages.length) return;
     const wantOcr = $('chkOcr').checked;
     const lang = $('ocrLang').value;
@@ -774,6 +814,8 @@
       toast('The searchable layer only works for Latin alphabets so far — use Extract text instead', 5000);
       return;
     }
+    const prm = exportParams();
+    const name = outName('pdf');
     busy = true; toast(wantOcr ? 'Building searchable PDF… this takes a while' : 'Building PDF…', 60000);
     let worker = null;
     try{
@@ -782,7 +824,7 @@
       const jsPDF = window.jspdf.jsPDF;
       let doc = null;
       for(let i=0; i<pages.length; i++){
-        const c = renderPage(pages[i], MAX_SIDE);
+        const c = renderPage(pages[i], prm.side);
         const wpt = c.width * 0.5, hpt = c.height * 0.5;
         const orient = wpt > hpt ? 'l' : 'p';
         if(!doc){
@@ -790,7 +832,7 @@
         }else{
           doc.addPage([wpt,hpt], orient);
         }
-        doc.addImage(c.toDataURL('image/jpeg',0.82), 'JPEG', 0, 0, wpt, hpt);
+        doc.addImage(c.toDataURL('image/jpeg', prm.jpeg), 'JPEG', 0, 0, wpt, hpt);
         if(worker){
           ocrStage = 'Reading page ' + (i+1) + ' of ' + pages.length + ' —';
           const result = await worker.recognize(c);
@@ -816,8 +858,28 @@
         }
         await new Promise(r=>setTimeout(r,0));
       }
-      download(doc.output('blob'), 'scan-' + stamp() + '.pdf');
-      toast(wantOcr ? 'Searchable PDF saved to your downloads' : 'PDF saved to your downloads');
+      const blob = doc.output('blob');
+      let shared = false;
+      if(shareIt && navigator.share){
+        const f = new File([blob], name, {type:'application/pdf'});
+        if(navigator.canShare && navigator.canShare({files:[f]})){
+          try{
+            await navigator.share({files:[f], title:name});
+            shared = true;
+            toast('Shared');
+          }catch(e){
+            if(e && e.name === 'AbortError'){
+              shared = true; // user closed the share sheet on purpose; do nothing more
+              toast('Share closed');
+            }
+          }
+        }
+      }
+      if(!shared){
+        download(blob, name);
+        toast(shareIt ? 'Sharing was not possible — saved to downloads instead'
+                      : (wantOcr ? 'Searchable PDF saved to your downloads' : 'PDF saved to your downloads'));
+      }
     }catch(e){
       toast('PDF failed — try again', 4000);
     }
@@ -827,11 +889,13 @@
 
   async function exportImage(){
     if(busy || !pages.length) return;
+    const prm = exportParams();
+    const name = outName('jpg');
     busy = true; toast('Building image…', 8000);
     try{
       await new Promise(r=>setTimeout(r,30));
       const W = 1500, GAP = 24;
-      const rendered = pages.map(pg=>renderPage(pg, MAX_SIDE));
+      const rendered = pages.map(pg=>renderPage(pg, prm.side));
       const heights = rendered.map(c=>Math.round(c.height * W / c.width));
       const total = heights.reduce((a,b)=>a+b,0) + GAP*(rendered.length-1);
       const big = document.createElement('canvas');
@@ -845,10 +909,10 @@
         y += heights[i] + GAP;
       });
       big.toBlob(b=>{
-        download(b, 'scan-' + stamp() + '.jpg');
+        download(b, name);
         toast('Image saved to your downloads');
         busy = false;
-      }, 'image/jpeg', 0.85);
+      }, 'image/jpeg', prm.jpeg);
     }catch(e){
       toast('Image failed — try again');
       busy = false;
@@ -965,9 +1029,17 @@
   }
 
   // ---------- self-timer / auto capture / Bluetooth remote ----------
-  let timerMode = 0;            // 0 = off, 1 = 3s delay, 2 = auto every 5s
+  let timerMode = 0;            // 0 = off, 1 = 3s delay, 2 = auto
+  let autoDelay = 5;            // seconds between auto scans
   let autoRunning = false, countdownT = null;
   const TIMER_LABELS = ['Off', '3s', 'Auto'];
+
+  $('speedSeg').addEventListener('click', e=>{
+    const b = e.target.closest('button'); if(!b) return;
+    autoDelay = parseInt(b.dataset.s, 10) || 5;
+    document.querySelectorAll('#speedSeg button').forEach(x=>x.classList.toggle('on', x===b));
+    toast('Auto scan: one page every ' + autoDelay + ' seconds');
+  });
 
   $('camTimer').addEventListener('click', ()=>{
     stopAuto();
@@ -998,7 +1070,7 @@
 
   function autoLoop(){
     if(!autoRunning) return;
-    countdown(5, async ()=>{
+    countdown(autoDelay, async ()=>{
       if(!autoRunning) return;
       await snap();
       autoLoop();
@@ -1041,7 +1113,8 @@
   $('btnGallery').addEventListener('click', ()=>$('fileGal').click());
   $('fileCam').addEventListener('change', e=>{ addFiles(e.target.files); e.target.value=''; });
   $('fileGal').addEventListener('change', e=>{ addFiles(e.target.files); e.target.value=''; });
-  $('btnPdf').addEventListener('click', exportPDF);
+  $('btnPdf').addEventListener('click', ()=>exportPDF(false));
+  $('btnShare').addEventListener('click', ()=>exportPDF(true));
   $('btnImg').addEventListener('click', exportImage);
   $('modeSeg').addEventListener('click', e=>{
     const b = e.target.closest('button'); if(!b) return;
@@ -1056,7 +1129,75 @@
     }
   });
 
-  renderList();
+  // ---------- keeping pages safe between sessions ----------
+  function idb(){
+    return new Promise((res, rej)=>{
+      const r = indexedDB.open('pocket-scanner', 1);
+      r.onupgradeneeded = ()=>r.result.createObjectStore('kv');
+      r.onsuccess = ()=>res(r.result);
+      r.onerror = ()=>rej(r.error);
+    });
+  }
+  async function idbSet(k, v){
+    const db = await idb();
+    return new Promise((res, rej)=>{
+      const tx = db.transaction('kv', 'readwrite');
+      tx.objectStore('kv').put(v, k);
+      tx.oncomplete = res;
+      tx.onerror = ()=>rej(tx.error);
+    });
+  }
+  async function idbGet(k){
+    const db = await idb();
+    return new Promise((res, rej)=>{
+      const tx = db.transaction('kv', 'readonly');
+      const rq = tx.objectStore('kv').get(k);
+      rq.onsuccess = ()=>res(rq.result);
+      rq.onerror = ()=>rej(rq.error);
+    });
+  }
+
+  let saveT = null;
+  function savePages(){
+    clearTimeout(saveT);
+    saveT = setTimeout(()=>{
+      try{
+        idbSet('pages', pages.map(p=>({d: p.img.src, m: p.mode, r: p.rot, c: p.crop})))
+          .catch(()=>{});
+      }catch(e){}
+    }, 700);
+  }
+
+  $('btnClear').addEventListener('click', ()=>{
+    if(!pages.length) return;
+    if(confirm('Remove all ' + pages.length + ' scanned pages and start fresh?')){
+      pages.length = 0;
+      renderList();
+      toast('Cleared');
+    }
+  });
+
+  (async function init(){
+    let restored = 0;
+    try{
+      const saved = await idbGet('pages');
+      if(saved && saved.length){
+        for(const s of saved){
+          const im = new Image();
+          await new Promise(r=>{ im.onload = r; im.onerror = r; im.src = s.d; });
+          if(im.naturalWidth){
+            im.width = im.naturalWidth; im.height = im.naturalHeight;
+            pages.push({id: nextId++, img: im, mode: s.m || 'color', rot: s.r || 0, crop: s.c || null});
+            restored++;
+          }
+        }
+      }
+    }catch(e){ /* private browsing or storage unavailable — just start empty */ }
+    renderList();
+    if(restored){
+      toast(restored + (restored===1 ? ' page' : ' pages') + ' restored from last time — tap Clear all to start fresh', 5000);
+    }
+  })();
 })();
 </script>
 </body>
