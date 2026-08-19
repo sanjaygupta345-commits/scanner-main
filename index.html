@@ -184,7 +184,7 @@
 <body>
 
 <header>
-  <h1>Pocket Scanner <span style="color:var(--muted); font-size:12px; font-weight:400;">v11</span></h1>
+  <h1>Pocket Scanner <span style="color:var(--muted); font-size:12px; font-weight:400;">v12</span></h1>
   <span class="count" id="count">0 pages</span>
   <button class="clearbtn" id="btnClear" hidden>Clear all</button>
 </header>
@@ -1052,14 +1052,13 @@
   $('camAuto').addEventListener('click', ()=>{
     ensureAudio();
     if(autoRunning){
-      stopAuto();
-      toast('Auto scanning stopped');
-    }else{
-      autoRunning = true;
-      $('camAuto').classList.add('on');
-      toast('Auto scanning — tap Auto or the round button to stop');
-      autoLoop();
+      toast('Auto is running — tap the big round button to stop');
+      return;
     }
+    autoRunning = true;
+    $('camAuto').classList.add('on');
+    toast('Auto scanning — tap the big round button to stop');
+    autoLoop();
   });
 
   function countdown(secs, done){
