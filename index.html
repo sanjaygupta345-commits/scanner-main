@@ -127,18 +127,18 @@
     font-size:13px; text-shadow:0 1px 3px #000; z-index:1;}
   .camflash{position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none; transition:opacity .18s;}
   .camflash.go{opacity:.7; transition:none;}
-  .cambar{display:flex; align-items:center; justify-content:space-between; gap:10px;
-    padding:14px 22px calc(18px + env(safe-area-inset-bottom));
+  .cambar{display:flex; align-items:center; justify-content:space-between; gap:8px;
+    padding:14px 12px calc(18px + env(safe-area-inset-bottom));
     background:rgba(20,23,28,.96); border-top:1px solid var(--line);}
   .camround{appearance:none; border:1px solid var(--line); background:var(--surface); color:var(--text);
-    width:56px; height:56px; border-radius:50%; font-size:22px; cursor:pointer;
+    width:48px; height:48px; border-radius:50%; font-size:20px; cursor:pointer; flex:0 0 auto;
     display:flex; align-items:center; justify-content:center;}
-  .camround.on{background:var(--accent); border-color:var(--accent);}
-  .shutter{appearance:none; cursor:pointer; width:76px; height:76px; border-radius:50%;
-    background:var(--accent); border:5px solid #fff; padding:0;}
+  .camround.on{background:var(--accent); color:var(--accent-ink); border-color:var(--accent);}
+  .shutter{appearance:none; cursor:pointer; width:68px; height:68px; border-radius:50%;
+    background:var(--accent); border:5px solid #fff; padding:0; flex:0 0 auto;}
   .shutter:active{transform:scale(.94);}
   .camdone{appearance:none; border:1px solid var(--line); background:var(--surface); color:var(--text);
-    border-radius:12px; min-height:56px; padding:0 18px; font:inherit; font-weight:600; cursor:pointer;}
+    border-radius:12px; min-height:48px; padding:0 14px; font:inherit; font-weight:600; cursor:pointer;}
 
   /* ---------- Crop editor ---------- */
   .cropview{
@@ -184,7 +184,7 @@
 <body>
 
 <header>
-  <h1>Pocket Scanner <span style="color:var(--muted); font-size:12px; font-weight:400;">v10</span></h1>
+  <h1>Pocket Scanner <span style="color:var(--muted); font-size:12px; font-weight:400;">v11</span></h1>
   <span class="count" id="count">0 pages</span>
   <button class="clearbtn" id="btnClear" hidden>Clear all</button>
 </header>
@@ -289,7 +289,8 @@
   <div class="camflash" id="camFlash"></div>
   <div class="cambar">
     <button class="camround" id="camTorch" title="Torch on / off">&#128294;</button>
-    <button class="camround" id="camTimer" title="Self-timer: off / 3 seconds / auto every 5 seconds" style="font-size:13px; font-weight:600;">Off</button>
+    <button class="camround" id="camDelay" title="3 second delay on / off" style="font-size:13px; font-weight:600;">3s</button>
+    <button class="camround" id="camAuto" title="Start / stop automatic scanning" style="font-size:12px; font-weight:700;">Auto</button>
     <button class="shutter" id="camSnap" title="Take scan"></button>
     <button class="camdone" id="camDone">Done</button>
   </div>
@@ -1021,9 +1022,8 @@
 
   function closeCamera(){
     stopAuto(); clearTimeout(countdownT);
-    timerMode = 0;
-    $('camTimer').textContent = TIMER_LABELS[0];
-    $('camTimer').classList.remove('on');
+    delay3 = false;
+    $('camDelay').classList.remove('on');
     setTorch(false);
     if(camStream){ camStream.getTracks().forEach(t=>t.stop()); }
     camStream = null; camTrack = null; torchOn = false;
@@ -1032,10 +1032,9 @@
   }
 
   // ---------- self-timer / auto capture / Bluetooth remote ----------
-  let timerMode = 0;            // 0 = off, 1 = 3s delay, 2 = auto
+  let delay3 = false;           // 3 second delay before each scan
   let autoDelay = 5;            // seconds between auto scans
   let autoRunning = false, countdownT = null;
-  const TIMER_LABELS = ['Off', '3s', 'Auto'];
 
   $('speedSeg').addEventListener('click', e=>{
     const b = e.target.closest('button'); if(!b) return;
@@ -1044,21 +1043,23 @@
     toast('Auto scan: one page every ' + autoDelay + ' seconds');
   });
 
-  $('camTimer').addEventListener('click', ()=>{
-    stopAuto();
-    timerMode = (timerMode + 1) % 3;
-    $('camTimer').textContent = TIMER_LABELS[timerMode];
-    $('camTimer').classList.toggle('on', timerMode !== 0);
-    if(timerMode === 1) toast('Timer: 3 second delay before each scan');
-    if(timerMode === 2){
-      ensureAudio();
+  $('camDelay').addEventListener('click', ()=>{
+    delay3 = !delay3;
+    $('camDelay').classList.toggle('on', delay3);
+    toast(delay3 ? 'Timer on: 3 second delay before each scan' : 'Timer off');
+  });
+
+  $('camAuto').addEventListener('click', ()=>{
+    ensureAudio();
+    if(autoRunning){
+      stopAuto();
+      toast('Auto scanning stopped');
+    }else{
       autoRunning = true;
-      toast('Auto scanning started — tap Auto again, or the round button, to stop');
+      $('camAuto').classList.add('on');
+      toast('Auto scanning — tap Auto or the round button to stop');
       autoLoop();
-      return;
     }
-    if(timerMode === 0) toast('Timer off');
-    updateCamNote();
   });
 
   function countdown(secs, done){
@@ -1070,11 +1071,10 @@
   }
 
   function stopAuto(){
-    if(autoRunning){
-      autoRunning = false;
-      clearTimeout(countdownT);
-      updateCamNote();
-    }
+    autoRunning = false;
+    clearTimeout(countdownT);
+    $('camAuto').classList.remove('on');
+    updateCamNote();
   }
 
   function autoLoop(){
@@ -1089,17 +1089,13 @@
   function shutterPress(){
     if(camView.hidden) return;
     ensureAudio();
-    if(timerMode === 1){
+    if(autoRunning){
+      stopAuto();
+      toast('Auto scanning stopped');
+      return;
+    }
+    if(delay3){
       countdown(3, async ()=>{ await snap(); updateCamNote(); });
-    }else if(timerMode === 2){
-      if(autoRunning){
-        stopAuto();
-        toast('Auto scanning stopped');
-      }else{
-        autoRunning = true;
-        toast('Auto scanning — tap the round button again to stop');
-        autoLoop();
-      }
     }else{
       snap();
     }
