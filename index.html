@@ -184,7 +184,7 @@
 <body>
 
 <header>
-  <h1>Pocket Scanner <span style="color:var(--muted); font-size:12px; font-weight:400;">v12</span></h1>
+  <h1>Pocket Scanner <span style="color:var(--muted); font-size:12px; font-weight:400;">v13</span></h1>
   <span class="count" id="count">0 pages</span>
   <button class="clearbtn" id="btnClear" hidden>Clear all</button>
 </header>
@@ -817,7 +817,9 @@
     }
     const prm = exportParams();
     const name = outName('pdf');
-    busy = true; toast(wantOcr ? 'Building searchable PDF… this takes a while' : 'Building PDF…', 60000);
+    busy = true;
+    buzz(BUZZ_TAP);
+    toast(wantOcr ? 'Building searchable PDF… this takes a while' : 'Building PDF…', 60000);
     let worker = null;
     try{
       await new Promise(r=>setTimeout(r,30));
@@ -867,6 +869,7 @@
           try{
             await navigator.share({files:[f], title:name});
             shared = true;
+            buzz(BUZZ_DONE);
             toast('Shared');
           }catch(e){
             if(e && e.name === 'AbortError'){
@@ -878,10 +881,12 @@
       }
       if(!shared){
         download(blob, name);
+        buzz(BUZZ_DONE);
         toast(shareIt ? 'Sharing was not possible — saved to downloads instead'
                       : (wantOcr ? 'Searchable PDF saved to your downloads' : 'PDF saved to your downloads'));
       }
     }catch(e){
+      buzz(BUZZ_FAIL);
       toast('PDF failed — try again', 4000);
     }
     if(worker){ try{ await worker.terminate(); }catch(e){} }
@@ -892,7 +897,9 @@
     if(busy || !pages.length) return;
     const prm = exportParams();
     const name = outName('jpg');
-    busy = true; toast('Building image…', 8000);
+    busy = true;
+    buzz(BUZZ_TAP);
+    toast('Building image…', 8000);
     try{
       await new Promise(r=>setTimeout(r,30));
       const W = 1500, GAP = 24;
@@ -911,10 +918,12 @@
       });
       big.toBlob(b=>{
         download(b, name);
+        buzz(BUZZ_DONE);
         toast('Image saved to your downloads');
         busy = false;
       }, 'image/jpeg', prm.jpeg);
     }catch(e){
+      buzz(BUZZ_FAIL);
       toast('Image failed — try again');
       busy = false;
     }
@@ -1000,6 +1009,10 @@
     beep(1500, 650, 0.09, 0.3);
     if(navigator.vibrate){ try{ navigator.vibrate(70); }catch(e){} }
   }
+  function buzz(pattern){
+    if(navigator.vibrate){ try{ navigator.vibrate(pattern); }catch(e){} }
+  }
+  const BUZZ_TAP = 40, BUZZ_DONE = [60,70,60], BUZZ_FAIL = 250;
 
   async function snap(){
     if(!camVideo.videoWidth) return;
